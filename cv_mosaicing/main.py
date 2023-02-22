@@ -31,14 +31,49 @@ def get_images(image_paths, scale_factor=1.0):
     return images
 
 
-def get_harris_corners(img, num_corners=1000, neighborhood_size=5):
+def get_harris_corners(img, num_corners=200, window_size=3, neighborhood_size=5):
     """
     Detect Harris corners in an image, returning their locations and neighborhoods
     """
-    locations = []
-    neighborhoods = []
+    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # calulate derivatives
+    Ix = cv2.Sobel(img_gray, ddepth=-1, dx=1, dy=0, ksize=3)
+    Iy = cv2.Sobel(img_gray, ddepth=-1, dx=0, dy=1, ksize=3)
+
+    # derivative products
+    Ixx = Ix * Ix
+    Iyy = Iy * Iy
+    Ixy = Ix * Iy
+
+    # sum of products 
+    sum_kernel = np.ones((window_size, window_size))
+    Sxx = cv2.filter2D(src=Ixx, ddepth=-1, kernel=sum_kernel)
+    Syy = cv2.filter2D(src=Iyy, ddepth=-1, kernel=sum_kernel)
+    Sxy = cv2.filter2D(src=Ixy, ddepth=-1, kernel=sum_kernel)
+
+    # Calculate C matricies and R values
+    R = np.ndarray(shape=Sxx.shape, dtype=np.float32)
+    for i, j in np.ndindex(Sxx.shape):
+        C = np.array([[Sxx[i, j], Sxy[i, j]], [Sxy[i, j], Syy[i, j]]])
+        R[i, j] = np.linalg.det(C) - 0.04 * (np.trace(C) ** 2)
+
+    cv2.imshow("R", R)
+
+    # Non-maximum suppression
     # TODO
-    return locations, neighborhoods
+
+    # Return the top num_corners corners by sorting and returning the indices
+    corners = np.array(np.unravel_index(np.argsort(R, axis=None)[:num_corners], R.shape))
+    corners = corners.reshape((num_corners, 2))
+
+    # Get the neighborhoods of the corners
+    neighborhoods = np.empty((num_corners, neighborhood_size, neighborhood_size))
+    # for i, (x, y) in enumerate(corners):
+    #     # TODO handle when too close to the edge
+    #     neighborhoods[i] = R[x-neighborhood_size//2:x+neighborhood_size//2+1, y-neighborhood_size//2:y+neighborhood_size//2+1]
+
+    return corners, neighborhoods
 
 
 def get_correspondences(img1, corners1, neighborhoods1, img2, corners2, neighborhoods2):
@@ -77,9 +112,9 @@ def display_harris_corners(img1, corners1, img2, corners2):
     img1_copy = img1.copy()
     img2_copy = img2.copy()
     for corner in corners1:
-        cv2.circle(img1_copy, corner, 3, (0, 0, 255), -1)
+        cv2.circle(img1_copy, tuple(corner), 3, (0, 0, 255), -1)
     for corner in corners2:
-        cv2.circle(img2_copy, corner, 3, (0, 0, 255), -1)
+        cv2.circle(img2_copy, tuple(corner), 3, (0, 0, 255), -1)
     cv2.imshow("harris corners", np.concatenate((img1_copy, img2_copy), axis=1))
     cv2.imwrite("output_harris_corners.jpg", np.concatenate((img1_copy, img2_copy), axis=1))
 
