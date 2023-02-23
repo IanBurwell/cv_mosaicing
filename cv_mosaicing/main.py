@@ -7,15 +7,9 @@ import numpy as np
 import argparse
 
 
-
-def get_args():
-    """
-    Get command line arguments
-    """
-    parser = argparse.ArgumentParser()
-    parser.add_argument("image1", help="Path to the first image")
-    parser.add_argument("image2", help="Path to the second image")
-    return parser.parse_args()
+###################
+# Main CV functions
+###################
 
 
 def get_images(image_paths, scale_factor=1.0):
@@ -31,11 +25,11 @@ def get_images(image_paths, scale_factor=1.0):
     return images
 
 
-def get_harris_corners(img, num_corners=200, window_size=3, neighborhood_size=5):
+def get_harris_corners(img, num_corners=200, window_size=5, neighborhood_size=7):
     """
     Detect Harris corners in an image, returning their locations and neighborhoods
     """
-    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
 
     # calulate derivatives
     Ix = cv2.Sobel(img_gray, ddepth=-1, dx=1, dy=0, ksize=3)
@@ -52,26 +46,34 @@ def get_harris_corners(img, num_corners=200, window_size=3, neighborhood_size=5)
     Syy = cv2.filter2D(src=Iyy, ddepth=-1, kernel=sum_kernel)
     Sxy = cv2.filter2D(src=Ixy, ddepth=-1, kernel=sum_kernel)
 
-    # Calculate C matricies and R values
-    R = np.ndarray(shape=Sxx.shape, dtype=np.float32)
+    # calculate C matricies and R values
+    R = np.empty(shape=Sxx.shape, dtype=np.float32)
     for i, j in np.ndindex(Sxx.shape):
+        # set edges to zero as we cannot give them features easily
+        if i < neighborhood_size//2 or i >= (R.shape[0] - neighborhood_size//2) or j < neighborhood_size//2 or j >= (R.shape[1] - neighborhood_size//2):
+            R[i, j] = 0
+            continue
+        # calculate R value
         C = np.array([[Sxx[i, j], Sxy[i, j]], [Sxy[i, j], Syy[i, j]]])
         R[i, j] = np.linalg.det(C) - 0.04 * (np.trace(C) ** 2)
 
-    cv2.imshow("R", R)
+    cv2.imshow("R",  cv2.normalize( R, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U))
+    cv2.imshow("Iyx", cv2.normalize(Ixx, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U))
+    cv2.imshow("Iyy", cv2.normalize(Iyy, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U))
 
-    # Non-maximum suppression
+    # Calculate Non-maximum suppression
     # TODO
+    # idea: blur and look for local maxima
 
     # Return the top num_corners corners by sorting and returning the indices
-    corners = np.array(np.unravel_index(np.argsort(R, axis=None)[:num_corners], R.shape))
-    corners = corners.reshape((num_corners, 2))
+    corners = np.unravel_index(np.argsort(R, axis=None)[-num_corners:], R.shape)
+    corners = np.stack((corners[1], corners[0]), axis=1)
 
     # Get the neighborhoods of the corners
     neighborhoods = np.empty((num_corners, neighborhood_size, neighborhood_size))
-    # for i, (x, y) in enumerate(corners):
-    #     # TODO handle when too close to the edge
-    #     neighborhoods[i] = R[x-neighborhood_size//2:x+neighborhood_size//2+1, y-neighborhood_size//2:y+neighborhood_size//2+1]
+    for i, (x, y) in enumerate(corners):
+        # TODO handle when too close to the edge
+        neighborhoods[i] = R[y-neighborhood_size//2:y+neighborhood_size//2+1, x-neighborhood_size//2:x+neighborhood_size//2+1]
 
     return corners, neighborhoods
 
@@ -105,18 +107,27 @@ def warp_and_blend(img1, img2, homography):
     return output
 
 
-def display_harris_corners(img1, corners1, img2, corners2):
+##########################
+# Display helper functions
+##########################
+
+
+def display_harris_corners(img1, corners1, img2=None, corners2=None):
     """
     Display the Harris corners on top of the image
     """
     img1_copy = img1.copy()
-    img2_copy = img2.copy()
     for corner in corners1:
-        cv2.circle(img1_copy, tuple(corner), 3, (0, 0, 255), -1)
-    for corner in corners2:
-        cv2.circle(img2_copy, tuple(corner), 3, (0, 0, 255), -1)
-    cv2.imshow("harris corners", np.concatenate((img1_copy, img2_copy), axis=1))
-    cv2.imwrite("output_harris_corners.jpg", np.concatenate((img1_copy, img2_copy), axis=1))
+        cv2.circle(img1_copy, corner, 2, (0, 0, 255), -1)
+    if img2 is not None:
+        img2_copy = img2.copy()
+        for corner in corners2:
+            cv2.circle(img2_copy, corner, 2, (0, 0, 255), -1)
+        cv2.imshow("harris corners", np.concatenate((img1_copy, img2_copy), axis=1))
+        cv2.imwrite("output_harris_corners.jpg", np.concatenate((img1_copy, img2_copy), axis=1))
+    else:
+        cv2.imshow("harris corners", img1_copy)
+        cv2.imwrite("output_harris_corners.jpg", img1_copy)
 
 
 def display_correspondences(img1, img2, correspondences):
@@ -128,6 +139,21 @@ def display_correspondences(img1, img2, correspondences):
         cv2.line(images, (c1x, c1y), (c2x, c2y+img1.shape[0]), (0, 0, 255))
     cv2.imshow("correspondences", images)
     cv2.imwrite("output_correspondences.jpg", images)
+
+
+######
+# Main 
+######
+
+
+def get_args():
+    """
+    Get command line arguments
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument("image1", help="Path to the first image")
+    parser.add_argument("image2", help="Path to the second image")
+    return parser.parse_args()
 
 
 def main():
