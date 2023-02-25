@@ -3,9 +3,8 @@ Main file for the cv_mosaicing project
 """
 
 import cv2
-import numpy as np
 import argparse
-
+import numpy as np
 
 ###################
 # Main CV functions
@@ -25,7 +24,32 @@ def get_images(image_paths, scale_factor=1.0):
     return images
 
 
-def get_harris_corners(img, num_corners=200, window_size=5, neighborhood_size=7):
+def get_nonmax_suppression(img, window_size=5):
+    """
+    Apply non-maximum suppression to an image
+    """
+    img_copy = img.copy()
+    img_min = img.min()
+
+    for r, c in np.ndindex(img_copy.shape):
+        # get window around specific pixel
+        c_lower = max(0, c-window_size//2)
+        c_upper = min(img_copy.shape[1], c+window_size//2)
+        r_lower = max(0, r-window_size//2)
+        r_upper = min(img_copy.shape[0], r+window_size//2)
+        
+        # set pixel to img_min so it is not included in max calculation
+        temp = img_copy[r, c]
+        img_copy[r, c] = img_min
+
+        # if pixel is the max in the window, keep it, otherwise keep it img_min
+        if temp > img_copy[r_lower:r_upper, c_lower:c_upper].max():
+            img_copy[r, c] = temp
+    
+    return img_copy
+
+
+def get_harris_corners(img, num_corners=100, window_size=5, neighborhood_size=7):
     """
     Detect Harris corners in an image, returning their locations and neighborhoods
     """
@@ -57,35 +81,51 @@ def get_harris_corners(img, num_corners=200, window_size=5, neighborhood_size=7)
         C = np.array([[Sxx[i, j], Sxy[i, j]], [Sxy[i, j], Syy[i, j]]])
         R[i, j] = np.linalg.det(C) - 0.04 * (np.trace(C) ** 2)
 
-    cv2.imshow("R",  cv2.normalize( R, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U))
+    # Calculate Non-maximum suppression
+    Rs = get_nonmax_suppression(R)
+
+    cv2.imshow("R",   cv2.normalize(  R, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U))
+    cv2.imshow("Rs",  cv2.normalize( Rs, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U))
     cv2.imshow("Iyx", cv2.normalize(Ixx, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U))
     cv2.imshow("Iyy", cv2.normalize(Iyy, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U))
 
-    # Calculate Non-maximum suppression
-    # TODO
-    # idea: blur and look for local maxima
-
     # Return the top num_corners corners by sorting and returning the indices
-    corners = np.unravel_index(np.argsort(R, axis=None)[-num_corners:], R.shape)
+    corners = np.unravel_index(np.argsort(Rs, axis=None)[-num_corners:], R.shape)
     corners = np.stack((corners[1], corners[0]), axis=1)
 
     # Get the neighborhoods of the corners
     neighborhoods = np.empty((num_corners, neighborhood_size, neighborhood_size))
     for i, (x, y) in enumerate(corners):
         # TODO handle when too close to the edge
-        neighborhoods[i] = R[y-neighborhood_size//2:y+neighborhood_size//2+1, x-neighborhood_size//2:x+neighborhood_size//2+1]
+        neighborhoods[i] = img_gray[y-neighborhood_size//2:y+neighborhood_size//2+1, x-neighborhood_size//2:x+neighborhood_size//2+1]
 
     return corners, neighborhoods
 
 
-def get_correspondences(img1, corners1, neighborhoods1, img2, corners2, neighborhoods2):
+def get_correspondences(corners1, neighborhoods1, corners2, neighborhoods2):
     """
     Find correspondences between the two images, returned as a dictionary mapping the corners
     from image1 to the corners in image2
     """
-    correspondences = {}
-    # TODO
-    return correspondences
+    final_correspondences = {}
+    
+    # normalize neighborhoods
+    neighborhoods1 = (neighborhoods1 - neighborhoods1.mean(axis=0, keepdims=True))
+    neighborhoods1 = neighborhoods1 / np.linalg.norm(neighborhoods1, axis=0)
+
+    neighborhoods2 = (neighborhoods2 - neighborhoods2.mean(axis=0, keepdims=True))
+    neighborhoods2 = neighborhoods2 / np.linalg.norm(neighborhoods2, axis=0)
+
+    for c1, n1 in zip(corners1, neighborhoods1):
+        best_corner = (corners2[0], 0)
+        for c2, n2 in zip(corners2, neighborhoods2):
+            corr = np.sum(n1 * n2)
+            if corr > best_corner[1]:
+                best_corner = (c2, corr)
+        
+        final_correspondences[tuple(c1)] = best_corner[0]
+
+    return final_correspondences
 
 
 def estimate_homography(corners1, corners2, correspondences):
@@ -135,8 +175,8 @@ def display_correspondences(img1, img2, correspondences):
     Display the correspondences between the two images
     """
     images = np.concatenate((img1, img2), axis=1) 
-    for (c1x, c1y), (c2x, c2y) in correspondences.items():
-        cv2.line(images, (c1x, c1y), (c2x, c2y+img1.shape[0]), (0, 0, 255))
+    for (c1r, c1c), (c2r, c2c) in correspondences.items():
+        cv2.line(images, (c1r, c1c), (c2r+img1.shape[1], c2c), np.random.randint(20, 255, 3).tolist())
     cv2.imshow("correspondences", images)
     cv2.imwrite("output_correspondences.jpg", images)
 
@@ -163,7 +203,7 @@ def main():
     # Read in two images. (Note: if the images are large, you may want to reduce their
     # size to keep running time reasonable! Document in your report the scale factor you
     # used.)
-    img1, img2 = get_images([args.image1, args.image2], scale_factor=0.5)
+    img1, img2 = get_images([args.image1, args.image2], scale_factor=1)
     cv2.imwrite("output_inputs.jpg", np.concatenate((img1, img2), axis=1))
     cv2.imshow("input images", np.concatenate((img1, img2), axis=1))
 
@@ -179,7 +219,7 @@ def main():
     # matches by finding pair of corners (one from each image) such that they have the
     # highest NCC value. You may also set a threshold to keep only matches that have a
     # large NCC score.
-    correspondences = get_correspondences(img1, corners1, neighborhoods1, img2, corners2, neighborhoods2)
+    correspondences = get_correspondences(corners1, neighborhoods1, corners2, neighborhoods2)
     display_correspondences(img1, img2, correspondences)
 
     # iv. Estimate the homography using the above correspondences. Note that these cor-
