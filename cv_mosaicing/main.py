@@ -49,7 +49,7 @@ def get_nonmax_suppression(img, window_size=5):
     return img_copy
 
 
-def get_harris_corners(img, num_corners=100, window_size=5, neighborhood_size=7):
+def get_harris_corners(img, num_corners=400, window_size=5, neighborhood_size=7):
     """
     Detect Harris corners in an image, returning their locations and neighborhoods
     """
@@ -128,12 +128,23 @@ def get_correspondences(corners1, neighborhoods1, corners2, neighborhoods2):
     return final_correspondences
 
 
-def estimate_homography(corners1, corners2, correspondences):
+def calculate_homography(points1, points2):
+    """
+    Estimate the homography between two sets of 4 corners using the 8-point algorithm
+    """
+    
+    # TODO
+    homography = np.identity(3)
+    return homography
+
+
+def homography_ransac(correspondences):
     """
     Estimate the homography between the two images using the given correspondences
     """
-    homography = np.identity(3)
     # TODO
+    # calculate homography from first 4 correspondences
+    homography = calculate_homography(*(correspondences.items()[:4]))
     return homography
 
 
@@ -232,7 +243,7 @@ def main():
     # dicted and observed locations to determine the number of inliers.
     # D. At the end, compute a least-squares homgraphy from ALL the inliers in the
     # largest set of inliers.
-    homography = estimate_homography(corners1, corners2, correspondences)
+    homography = homography_ransac(corners1, corners2, correspondences)
 
     # v. Warp one image onto the other one, blending overlapping pixels together to create
     # a single image that shows the union of all pixels from both input images. You can
@@ -252,6 +263,7 @@ def main():
     cv2.imwrite("output_final.jpg", output)
     cv2.imshow("output final", output)
     cv2.waitKey(0)
+
 
 if __name__ == "__main__":
     main()
