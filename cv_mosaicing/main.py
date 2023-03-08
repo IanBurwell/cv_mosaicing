@@ -14,6 +14,9 @@ import numpy as np
 def get_images(image_paths, scale_factor=1.0):
     """
     Read in the images
+
+    ## Returns:
+        images: a list of the images
     """
     images = []
     for image_path in image_paths:
@@ -27,6 +30,9 @@ def get_images(image_paths, scale_factor=1.0):
 def get_nonmax_suppression(img, window_size=5):
     """
     Apply non-maximum suppression to an image
+
+    ## Returns:
+        img_copy: a copy of the image with non-maximum suppression applied
     """
     img_copy = img.copy()
     img_min = img.min()
@@ -52,6 +58,10 @@ def get_nonmax_suppression(img, window_size=5):
 def get_harris_corners(img, num_corners=400, window_size=5, neighborhood_size=7):
     """
     Detect Harris corners in an image, returning their locations and neighborhoods
+
+    ## Returns:
+        corners: (num_corners, 2) array of (x, y) coordinates of the corners
+        neighborhood: (num_corners, neighborhood_size, neighborhood_size) array of the neighborhoods around the corners
     """
     img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
 
@@ -84,11 +94,19 @@ def get_harris_corners(img, num_corners=400, window_size=5, neighborhood_size=7)
     # Calculate Non-maximum suppression
     Rs = get_nonmax_suppression(R)
 
-    cv2.imshow("R",   cv2.normalize(  R, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U))
-    cv2.imshow("Rs",  cv2.normalize( Rs, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U))
-    cv2.imshow("Iyx", cv2.normalize(Ixx, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U))
-    cv2.imshow("Iyy", cv2.normalize(Iyy, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U))
+    # Display the images in a single window (debugging)
+    Ixx_disp = cv2.normalize(Ixx, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
+    Iyy_disp = cv2.normalize(Iyy, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
+    R_disp = cv2.normalize(R, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
+    Rs_disp = cv2.normalize(Rs, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
+    Hor1 = cv2.hconcat([Ixx_disp, Iyy_disp])
+    Hor2 = cv2.hconcat([R_disp, Rs_disp])
+    cv2.imshow("Harris Corner Detection (Gradient and Response visualization)", cv2.vconcat([Hor1, Hor2]))
+    
 
+    # Exception if the number of corners is greater than the number of pixels in the image
+    if num_corners > Rs.size:
+        raise ValueError("num_corners must be less than the number of pixels in the image")
     # Return the top num_corners corners by sorting and returning the indices
     corners = np.unravel_index(np.argsort(Rs, axis=None)[-num_corners:], R.shape)
     corners = np.stack((corners[1], corners[0]), axis=1)
@@ -106,6 +124,9 @@ def get_correspondences(corners1, neighborhoods1, corners2, neighborhoods2):
     """
     Find correspondences between the two images, returned as a dictionary mapping the corners
     from image1 to the corners in image2
+    
+    ## Returns:
+        final_correspondences: dictionary mapping (x1, y1) to (x2, y2)
     """
     final_correspondences = {}
     
@@ -131,20 +152,65 @@ def get_correspondences(corners1, neighborhoods1, corners2, neighborhoods2):
 def calculate_homography(points1, points2):
     """
     Estimate the homography between two sets of 4 corners using the 8-point algorithm
+    ## Returns:
+        homography: 3x3 homography matrix
     """
-    
-    # TODO
-    homography = np.identity(3)
+    # Create A matrix
+    A = np.zeros((8, 9))
+    for i in range(4):
+        x1, y1 = points1[i]
+        x2, y2 = points2[i]
+        # Create A matrix for each point
+        A[2*i] = [x1, y1, 1, 0, 0, 0, -x2*x1, -x2*y1, -x2]
+        A[2*i+1] = [0, 0, 0, x1, y1, 1, -y2*x1, -y2*y1, -y2]
+    # Solve for h using SVD
+    U, S, V = np.linalg.svd(A)
+    h = V[-1]
+    # Reshape h into a 3x3 matrix
+    homography = h.reshape((3, 3))
+    # Normalize homography
+    homography = homography / homography[2, 2]
+
     return homography
 
 
 def homography_ransac(correspondences):
     """
     Estimate the homography between the two images using the given correspondences
+
+    ## Returns: 
+        homography: 3x3 homography matrix
     """
-    # TODO
-    # calculate homography from first 4 correspondences
-    homography = calculate_homography(*(correspondences.items()[:4]))
+    # Convert correspoindence dictionary to (N, 2 x 2) array
+    correspondences = np.array(list(correspondences.items()))
+    # Implement RANSAC for homography estimation
+    max_iterations = 1000
+    inliner_threshold = 0.1
+    iter = 0
+    while (iter <= max_iterations):
+        # Sample 4 points from the correspondences
+        sample = np.random.choice(correspondences.shape[0], 4, replace=False)
+        sample = correspondences[sample]
+        # Calculate homography
+        homography = calculate_homography(sample[:, 0], sample[:, 1])
+        # Calculate inliers
+        inliers = 0
+        for c in correspondences:
+            # Get the points
+            p1 = np.array([c[0][0], c[0][1], 1])
+            p2 = np.array([c[1][0], c[1][1], 1])
+            # Perform the homography transformation
+            p2_hat = np.dot(homography, p1)
+            # Normalize
+            p2_hat = p2_hat / p2_hat[2]
+            if np.linalg.norm(p2 - p2_hat) < inliner_threshold:
+                inliers += 1
+        # Repeat until max iterations or enough inliers
+        if inliers > 0.5 * correspondences.shape[0]:
+            break
+        iter += 1
+
+    # Return homography
     return homography
 
 
@@ -152,9 +218,13 @@ def warp_and_blend(img1, img2, homography):
     """
     Warp one image onto the other one, blending overlapping pixels together to create
     a single image that shows the union of all pixels from both input images
+
+    ## Returns:
+        output: the blended image
+
     """
-    output = np.zeros_like(img1)
-    # TODO
+
+    # Return output
     return output
 
 
@@ -219,7 +289,7 @@ def main():
     cv2.imshow("input images", np.concatenate((img1, img2), axis=1))
 
     # ii. Apply Harris corner detector to both images: compute Harris R function over the
-    # image, and then do non-maimum suppression to get a sparse set of corner features.
+    # image, and then do non-maximum suppression to get a sparse set of corner features.
     corners1, neighborhoods1 = get_harris_corners(img1)
     corners2, neighborhoods2 = get_harris_corners(img2)
     display_harris_corners(img1, corners1, img2, corners2)
@@ -243,7 +313,8 @@ def main():
     # dicted and observed locations to determine the number of inliers.
     # D. At the end, compute a least-squares homgraphy from ALL the inliers in the
     # largest set of inliers.
-    homography = homography_ransac(corners1, corners2, correspondences)
+    homography = homography_ransac(correspondences)
+    print(homography)
 
     # v. Warp one image onto the other one, blending overlapping pixels together to create
     # a single image that shows the union of all pixels from both input images. You can
@@ -257,12 +328,12 @@ def main():
     # warping function.
     # D. Use any of the blending schemes we will discuss in class to blend pixels in the
     # area of overlap between both images.
-    output = warp_and_blend(img1, img2, homography)
+    #output = warp_and_blend(img1, img2, homography)
 
     # Save and display the output image
-    cv2.imwrite("output_final.jpg", output)
-    cv2.imshow("output final", output)
-    cv2.waitKey(0)
+    # cv2.imwrite("output_final.jpg", output)
+    # cv2.imshow("output final", output)
+    # cv2.waitKey(0)
 
 
 if __name__ == "__main__":
