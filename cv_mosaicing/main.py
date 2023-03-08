@@ -223,7 +223,7 @@ def warp_and_blend(img1, img2, homography):
         output: the blended image
 
     """
-
+    # TODO: Implement this function
     # Return output
     return output
 
