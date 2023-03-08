@@ -202,7 +202,7 @@ def homography_ransac(correspondences):
             # Perform the homography transformation
             p2_hat = np.dot(homography, p1)
             # Normalize
-            p2_hat = p2_hat / p2_hat[2]
+            p2_hat = np.isfinite(p2_hat / p2_hat[2]).all()
             if np.linalg.norm(p2 - p2_hat) < inliner_threshold:
                 inliers += 1
         # Repeat until max iterations or enough inliers
