@@ -9,7 +9,7 @@ pip install -r requirements.txt
 
 Run:
 ```
-python cv_mosaicing/main.py DanaOffice/DSC_0308.JPG DanaOffice/DSC_0309.JPG
+python cv_mosaicing/main.py DanaOffice/DSC_0309.JPG DanaOffice/DSC_0308.JPG
 ```
 
 # Output Example
