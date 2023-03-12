@@ -270,18 +270,16 @@ def display_harris_corners(img1, corners1, img2=None, corners2=None):
 
 def display_correspondences(img1, img2, correspondences):
     """
-    Display the correspondences between the two images
+    Display the correspondences between the two images one on top of the other with lines
     """
     images = np.concatenate((img1, img2), axis=1) 
     for (c1r, c1c), (c2r, c2c) in correspondences.items():
-        cv2.line(images, (c1r, c1c), (c2r+img1.shape[1], c2c), np.random.randint(20, 255, 3).tolist())
+        cv2.circle(images, (c1r, c1c), 2, (0, 0, 255), -1)
+        cv2.circle(images, (c2r+img1.shape[1], c2c), 2, (0, 0, 255), -1)
+        cv2.line(images, (c1r, c1c), (c2r+img1.shape[1], c2c), thickness=1, color=(0, 255, 0))
     cv2.imshow("correspondences", images)
     cv2.imwrite("output_correspondences.jpg", images)
 
-
-######
-# Main 
-######
 
 
 def get_args():
@@ -352,8 +350,8 @@ def main():
     #output = warp_and_blend(img1, img2, homography)
 
     # Save and display the output image
-    #cv2.imwrite("output_final.jpg", output)
-    #cv2.imshow("output final", output)
+    # cv2.imwrite("output_final.jpg", output)
+    # cv2.imshow("output final", output)
     cv2.waitKey(0)
 
 
