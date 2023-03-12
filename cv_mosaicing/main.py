@@ -164,7 +164,7 @@ def calculate_homography(points1, points2):
         A[2*i] = [x1, y1, 1, 0, 0, 0, -x2*x1, -x2*y1, -x2]
         A[2*i+1] = [0, 0, 0, x1, y1, 1, -y2*x1, -y2*y1, -y2]
     # Solve for h using SVD
-    U, S, V = np.linalg.svd(A)
+    U, S, V = np.linalg.svd(A.T @ A)
     h = V[-1]
     # Reshape h into a 3x3 matrix
     homography = h.reshape((3, 3))
@@ -185,7 +185,11 @@ def homography_ransac(correspondences):
     correspondences = np.array(list(correspondences.items()))
     # Implement RANSAC for homography estimation
     max_iterations = 1000
-    inliner_threshold = 0.1
+    best_homography = None
+    max_inliers = 0
+    best_set_correspondences = {}
+    temp_correspondences = {}
+    inliner_threshold = 1
     iter = 0
     while (iter <= max_iterations):
         # Sample 4 points from the correspondences
@@ -205,14 +209,18 @@ def homography_ransac(correspondences):
             p2_hat = np.isfinite(p2_hat / p2_hat[2]).all()
             if np.linalg.norm(p2 - p2_hat) < inliner_threshold:
                 inliers += 1
-        # Repeat until max iterations or enough inliers
-        if inliers > 0.5 * correspondences.shape[0]:
-            break
+                temp_correspondences[tuple(c[0])] = c[1]
+        # Check if the homography is better than the previous one
+        if (inliers > max_inliers):
+            print(inliers)
+            max_inliers = inliers
+            best_homography = homography
+            best_set_correspondences = temp_correspondences
+        temp_correspondences = {}
         iter += 1
 
     # Return homography
-    return homography
-
+    return best_homography, best_set_correspondences
 
 def warp_and_blend(img1, img2, homography):
     """
@@ -311,7 +319,7 @@ def main():
     # highest NCC value. You may also set a threshold to keep only matches that have a
     # large NCC score.
     correspondences = get_correspondences(corners1, neighborhoods1, corners2, neighborhoods2)
-    display_correspondences(img1, img2, correspondences)
+    #display_correspondences(img1, img2, correspondences)
 
     # iv. Estimate the homography using the above correspondences. Note that these cor-
     # respondences are likely to have many errors (outliers). That is ok: you should use
@@ -323,11 +331,12 @@ def main():
     # dicted and observed locations to determine the number of inliers.
     # D. At the end, compute a least-squares homgraphy from ALL the inliers in the
     # largest set of inliers.
-    homography = homography_ransac(correspondences)
-    print(homography)
-    homography = np.array([[0.8, 0, 200],
-                           [0,  0.8,0],
-                           [0,  0,  1]])
+    homography, best_set_corresp = homography_ransac(correspondences)
+    print("Homography: \n", homography)
+    display_correspondences(img1, img2, best_set_corresp)
+    # homography = np.array([[0.8, 0, 200],
+    #                        [0,  0.8,0],
+    #                        [0,  0,  1]])
 
     # v. Warp one image onto the other one, blending overlapping pixels together to create
     # a single image that shows the union of all pixels from both input images. You can
@@ -341,11 +350,11 @@ def main():
     # warping function.
     # D. Use any of the blending schemes we will discuss in class to blend pixels in the
     # area of overlap between both images.
-    output = warp_and_blend(img1, img2, homography)
+    #output = warp_and_blend(img1, img2, homography)
 
     # Save and display the output image
-    cv2.imwrite("output_final.jpg", output)
-    cv2.imshow("output final", output)
+    #cv2.imwrite("output_final.jpg", output)
+    #cv2.imshow("output final", output)
     cv2.waitKey(0)
 
 
