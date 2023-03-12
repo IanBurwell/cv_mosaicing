@@ -301,7 +301,7 @@ def main():
     # Read in two images. (Note: if the images are large, you may want to reduce their
     # size to keep running time reasonable! Document in your report the scale factor you
     # used.)
-    img1, img2 = get_images([args.image1, args.image2], scale_factor=0.5)
+    img1, img2 = get_images([args.image1, args.image2])
     cv2.imwrite("output_inputs.jpg", np.concatenate((img1, img2), axis=1))
     cv2.imshow("input images", np.concatenate((img1, img2), axis=1))
 
