@@ -233,9 +233,10 @@ def warp_and_blend(img1, img2, homography):
     left_img = img1.copy()
     right_img = img2.copy()
     # Check if img2 is to the left of img1
-    if homography[0, 2] < 0:
+    if homography[0, 2] > 0:
         # Swap the images
         left_img, right_img = right_img, left_img
+    else:
         homography = np.linalg.inv(homography)
 
     result = cv2.warpPerspective(right_img, homography, 
@@ -316,7 +317,7 @@ def main():
     # highest NCC value. You may also set a threshold to keep only matches that have a
     # large NCC score.
     correspondences = get_correspondences(corners1, neighborhoods1, corners2, neighborhoods2)
-    #display_correspondences(img1, img2, correspondences)
+    # display_correspondences(img1, img2, correspondences)
 
     # iv. Estimate the homography using the above correspondences. Note that these cor-
     # respondences are likely to have many errors (outliers). That is ok: you should use
@@ -331,9 +332,6 @@ def main():
     homography, best_set_corresp = homography_ransac(correspondences)
     print("Homography: \n", homography)
     display_correspondences(img1, img2, best_set_corresp)
-    # homography = np.array([[0.8, 0, 200],
-    #                        [0,  0.8,0],
-    #                        [0,  0,  1]])
 
     # v. Warp one image onto the other one, blending overlapping pixels together to create
     # a single image that shows the union of all pixels from both input images. You can
@@ -347,11 +345,11 @@ def main():
     # warping function.
     # D. Use any of the blending schemes we will discuss in class to blend pixels in the
     # area of overlap between both images.
-    #output = warp_and_blend(img1, img2, homography)
+    output = warp_and_blend(img1, img2, homography)
 
     # Save and display the output image
-    # cv2.imwrite("output_final.jpg", output)
-    # cv2.imshow("output final", output)
+    cv2.imwrite("output_final.jpg", output)
+    cv2.imshow("output final", output)
     cv2.waitKey(0)
 
 
