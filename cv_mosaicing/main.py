@@ -112,15 +112,14 @@ def get_harris_corners(img, num_corners=400, window_size=5, neighborhood_size=7)
     corners = np.stack((corners[1], corners[0]), axis=1)
 
     # Get the neighborhoods of the corners
-    neighborhoods = np.empty((num_corners, neighborhood_size, neighborhood_size))
+    neighborhoods = np.empty((num_corners, neighborhood_size, neighborhood_size, img.shape[2]))
     for i, (x, y) in enumerate(corners):
-        # TODO handle when too close to the edge
-        neighborhoods[i] = img_gray[y-neighborhood_size//2:y+neighborhood_size//2+1, x-neighborhood_size//2:x+neighborhood_size//2+1]
+        neighborhoods[i] = img[y-neighborhood_size//2:y+neighborhood_size//2+1, x-neighborhood_size//2:x+neighborhood_size//2+1]
 
     return corners, neighborhoods
 
 
-def get_correspondences(corners1, neighborhoods1, corners2, neighborhoods2):
+def get_correspondences(corners1, neighborhoods1, corners2, neighborhoods2, max_correspondences_per_feature=5):
     """
     Find correspondences between the two images, returned as a dictionary mapping the corners
     from image1 to the corners in image2
@@ -131,20 +130,25 @@ def get_correspondences(corners1, neighborhoods1, corners2, neighborhoods2):
     final_correspondences = {}
     
     # normalize neighborhoods
-    neighborhoods1 = (neighborhoods1 - neighborhoods1.mean(axis=0, keepdims=True))
-    neighborhoods1 = neighborhoods1 / np.linalg.norm(neighborhoods1, axis=0)
+    print(neighborhoods1.shape)
+    neighborhoods1 -= neighborhoods1.mean(axis=0, keepdims=True)
+    neighborhoods1 /= np.linalg.norm(neighborhoods1, axis=0)
 
-    neighborhoods2 = (neighborhoods2 - neighborhoods2.mean(axis=0, keepdims=True))
-    neighborhoods2 = neighborhoods2 / np.linalg.norm(neighborhoods2, axis=0)
+    neighborhoods2 -= neighborhoods2.mean(axis=0, keepdims=True)
+    neighborhoods2 /= np.linalg.norm(neighborhoods2, axis=0)
 
+    target_features_hashes = []
     for c1, n1 in zip(corners1, neighborhoods1):
         best_corner = (corners2[0], 0)
         for c2, n2 in zip(corners2, neighborhoods2):
             corr = np.sum(n1 * n2)
             if corr > best_corner[1]:
                 best_corner = (c2, corr)
-        
-        final_correspondences[tuple(c1)] = best_corner[0]
+
+        best_corner_hash = hash(best_corner[0].tostring())
+        if target_features_hashes.count(best_corner_hash) < max_correspondences_per_feature:
+            target_features_hashes.append(best_corner_hash)
+            final_correspondences[tuple(c1)] = best_corner[0]
 
     return final_correspondences
 
@@ -221,6 +225,7 @@ def homography_ransac(correspondences):
     # Return homography
     return best_homography, best_set_correspondences
 
+
 def warp_and_blend(img1, img2, homography):
     """
     Warp one image onto the other one, blending overlapping pixels together to create
@@ -228,8 +233,8 @@ def warp_and_blend(img1, img2, homography):
 
     ## Returns:
         output: the blended image
-
     """
+
     left_img = img1.copy()
     right_img = img2.copy()
     # Check if img2 is to the left of img1
@@ -269,18 +274,21 @@ def display_harris_corners(img1, corners1, img2=None, corners2=None):
         cv2.imwrite("output_harris_corners.jpg", img1_copy)
 
 
-def display_correspondences(img1, img2, correspondences):
+def display_correspondences(img1, img2, correspondences, inliers=None):
     """
     Display the correspondences between the two images one on top of the other with lines
     """
+
     images = np.concatenate((img1, img2), axis=1) 
     for (c1r, c1c), (c2r, c2c) in correspondences.items():
-        cv2.circle(images, (c1r, c1c), 2, (0, 0, 255), -1)
-        cv2.circle(images, (c2r+img1.shape[1], c2c), 2, (0, 0, 255), -1)
-        cv2.line(images, (c1r, c1c), (c2r+img1.shape[1], c2c), thickness=1, color=(0, 255, 0))
+        cv2.circle(images, (c1r, c1c), 2, (255, 0, 0), -1)
+        cv2.circle(images, (c2r+img1.shape[1], c2c), 2, (255, 0, 0), -1)
+        cv2.line(images, (c1r, c1c), (c2r+img1.shape[1], c2c), thickness=1, color=(0, 0, 255))
+    if inliers is not None:
+        for (c1r, c1c), (c2r, c2c) in inliers.items():
+            cv2.line(images, (c1r, c1c), (c2r+img1.shape[1], c2c), thickness=1, color=(0, 255, 0))
     cv2.imshow("correspondences", images)
     cv2.imwrite("output_correspondences.jpg", images)
-
 
 
 def get_args():
@@ -306,8 +314,8 @@ def main():
 
     # ii. Apply Harris corner detector to both images: compute Harris R function over the
     # image, and then do non-maximum suppression to get a sparse set of corner features.
-    corners1, neighborhoods1 = get_harris_corners(img1, num_corners=250, neighborhood_size=19)
-    corners2, neighborhoods2 = get_harris_corners(img2, num_corners=250, neighborhood_size=19)
+    corners1, neighborhoods1 = get_harris_corners(img1, num_corners=500, neighborhood_size=19)
+    corners2, neighborhoods2 = get_harris_corners(img2, num_corners=500, neighborhood_size=19)
     display_harris_corners(img1, corners1, img2, corners2)
 
     # iii. Find correspondences between the two images: given two set of corners from the
@@ -317,7 +325,6 @@ def main():
     # highest NCC value. You may also set a threshold to keep only matches that have a
     # large NCC score.
     correspondences = get_correspondences(corners1, neighborhoods1, corners2, neighborhoods2)
-    # display_correspondences(img1, img2, correspondences)
 
     # iv. Estimate the homography using the above correspondences. Note that these cor-
     # respondences are likely to have many errors (outliers). That is ok: you should use
@@ -331,7 +338,7 @@ def main():
     # largest set of inliers.
     homography, best_set_corresp = homography_ransac(correspondences)
     print("Homography: \n", homography)
-    display_correspondences(img1, img2, best_set_corresp)
+    display_correspondences(img1, img2, correspondences, best_set_corresp)
 
     # v. Warp one image onto the other one, blending overlapping pixels together to create
     # a single image that shows the union of all pixels from both input images. You can
