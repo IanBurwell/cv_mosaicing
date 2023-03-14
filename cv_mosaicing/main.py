@@ -27,7 +27,7 @@ def get_images(image_paths, scale_factor=1.0):
     return images
 
 
-def get_nonmax_suppression(img, window_size=5):
+def get_nonmax_suppression(img, window_size=3):
     """
     Apply non-maximum suppression to an image
 
@@ -54,8 +54,86 @@ def get_nonmax_suppression(img, window_size=5):
     
     return img_copy
 
+def mouse_callback(event, x, y, flags, params):
+    """
+    Mouse callback function for selecting corners
 
-def get_harris_corners(img, num_corners=400, window_size=5, neighborhood_size=7):
+    ## Inputs:
+        event: the event that has occurred
+        x: the x pixel coordinate of the image
+        y: the y pixel coordinate of the image
+        flags: any flags that are set
+        params: any parameters that are passed
+    """
+    points = params["points"]
+    image = params["image"]
+    if event == cv2.EVENT_LBUTTONDOWN:
+        points.append([x, y])
+        cv2.putText(image,f"({x},{y})",(x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+        cv2.circle(image, (x, y), 5, (0, 0, 255), -1)
+
+def get_corners(img):
+    """
+    Get the corners of a user selected region of interest
+
+    ## Inputs:
+        img: the image to select the corners on
+    ## Returns:
+        corners: the corners of the region of interest in pixel coordinates
+    """
+    # Window to display the image and the mouse callback to select the corners
+    cv2.namedWindow("Select Corners.")
+    points = []
+    cv2.setMouseCallback("Select Corners.", mouse_callback, {"points": points, "image": img})
+
+
+    while len(points) < 4:
+        cv2.imshow("Select Corners.", img)
+        cv2.waitKey(1)
+
+    cv2.destroyAllWindows()
+
+    return np.array(points)
+
+
+
+def warp_on_frame(image_to_warp, target_image):
+    """
+    Warp an image onto a user selected roi
+
+    ## Inputs:
+        image_to_warp: the image to warp onto the target image
+        target_image: the image to warp onto
+    ## Returns:
+        warped_image: the warped image
+    """
+    # Get the corners on the target image from the user.
+    # The corners are returned in the order top left, top right, bottom right, bottom left
+    target_corners = get_corners(target_image)
+    # The corners of the image to warp are the corners of the image
+    image_to_warp_corners = np.array([[0, 0], [image_to_warp.shape[1], 0], [image_to_warp.shape[1], image_to_warp.shape[0]], [0, image_to_warp.shape[0]]])
+    # Calculate the homography matrix
+    homography = calculate_homography(image_to_warp_corners, target_corners)
+    print(homography)
+    # Warp the image
+    warped_image = cv2.warpPerspective(image_to_warp, homography, (target_image.shape[1], target_image.shape[0]))
+
+    # 'mask' is created using the np.zeros_like function with the same shape as the target image
+    # fillConvex function is then used to fill the rectangular region defined by target_corners 
+    # This creates a binary mask that is used to determine where the warped image should be placed in the target image.
+    # cv2.bitwise_and function is used to apply the mask to the warped image, so that only the part of the image that corresponds to the rectangular region is kept.
+    # cv2.bitwise_and function is used again to apply the inverse of the mask to the target image, so that the rectangular region is removed.
+    mask = np.zeros_like(target_image)
+    cv2.fillConvexPoly(mask, target_corners, (255, 255, 255))
+    warped_image = cv2.bitwise_and(warped_image, mask)
+    target_image = cv2.bitwise_and(target_image, cv2.bitwise_not(mask))
+    warped_image = cv2.add(target_image, warped_image)
+    
+    return warped_image
+
+
+
+def get_harris_corners(img, num_corners=1000, window_size=5, neighborhood_size=7):
     """
     Detect Harris corners in an image, returning their locations and neighborhoods
 
@@ -156,6 +234,9 @@ def get_correspondences(corners1, neighborhoods1, corners2, neighborhoods2, max_
 def calculate_homography(points1, points2):
     """
     Estimate the homography between two sets of 4 corners using the 8-point algorithm
+    ## Inputs:
+        points1: 4x2 array of points in image 1
+        points2: 4x2 array of points in image 2
     ## Returns:
         homography: 3x3 homography matrix
     """
@@ -188,12 +269,12 @@ def homography_ransac(correspondences):
     # Convert correspoindence dictionary to (N, 2 x 2) array
     correspondences = np.array(list(correspondences.items()))
     # Implement RANSAC for homography estimation
-    max_iterations = 1000
+    max_iterations = 2
     best_homography = None
     max_inliers = 0
     best_set_correspondences = {}
     temp_correspondences = {}
-    inliner_threshold = 1
+    inliner_threshold = 2
     iter = 0
     while (iter <= max_iterations):
         # Sample 4 points from the correspondences
@@ -244,8 +325,7 @@ def warp_and_blend(img1, img2, homography):
     else:
         homography = np.linalg.inv(homography)
 
-    result = cv2.warpPerspective(right_img, homography, 
-                                   (left_img.shape[1] + right_img.shape[1], left_img.shape[0]))
+    result = cv2.warpPerspective(right_img, homography, (left_img.shape[1] + right_img.shape[1], left_img.shape[0]))
     
     result[0:left_img.shape[0], 0:left_img.shape[1]] = left_img
     return result
@@ -305,10 +385,7 @@ def main():
     # Read in the command line arguments
     args = get_args()
 
-    # Read in two images. (Note: if the images are large, you may want to reduce their
-    # size to keep running time reasonable! Document in your report the scale factor you
-    # used.)
-    img1, img2 = get_images([args.image1, args.image2])
+    img1, img2 = get_images([args.image1, args.image2], scale_factor=1)
     cv2.imwrite("output_inputs.jpg", np.concatenate((img1, img2), axis=1))
     cv2.imshow("input images", np.concatenate((img1, img2), axis=1))
 
@@ -318,12 +395,6 @@ def main():
     corners2, neighborhoods2 = get_harris_corners(img2, num_corners=500, neighborhood_size=19)
     display_harris_corners(img1, corners1, img2, corners2)
 
-    # iii. Find correspondences between the two images: given two set of corners from the
-    # two images, compute normalized cross correlation (NCC) of image patches centered
-    # at each corner. (Note that this will be O(n2) process.) Choose potential corner
-    # matches by finding pair of corners (one from each image) such that they have the
-    # highest NCC value. You may also set a threshold to keep only matches that have a
-    # large NCC score.
     correspondences = get_correspondences(corners1, neighborhoods1, corners2, neighborhoods2)
 
     # iv. Estimate the homography using the above correspondences. Note that these cor-
@@ -340,7 +411,7 @@ def main():
     print("Homography: \n", homography)
     display_correspondences(img1, img2, correspondences, best_set_corresp)
 
-    # v. Warp one image onto the other one, blending overlapping pixels together to create
+    # v.gi Warp one image onto the other one, blending overlapping pixels together to create
     # a single image that shows the union of all pixels from both input images. You can
     # choose which of the images to warp. The steps are as follows:
     # A. Determine how big to make the final output image so that it contains the union
@@ -360,6 +431,18 @@ def main():
     cv2.waitKey(0)
 
 
+def extra_credit():
+    args = get_args()
+    img1, img2 = get_images([args.image1, args.image2], scale_factor=1)
+
+    # Warp the second image onto the frame of the first image
+    output = warp_on_frame(img1, img2)
+    # Show the output image
+    cv2.imshow("output final", output)
+    cv2.waitKey(0)
+
+
 if __name__ == "__main__":
-    main()
+    #main()
+    extra_credit()
 
