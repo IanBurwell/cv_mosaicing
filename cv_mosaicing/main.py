@@ -27,7 +27,7 @@ def get_images(image_paths, scale_factor=1.0):
     return images
 
 
-def get_nonmax_suppression(img, window_size=3):
+def get_nonmax_suppression(img, window_size=5):
     """
     Apply non-maximum suppression to an image
 
@@ -54,6 +54,7 @@ def get_nonmax_suppression(img, window_size=3):
     
     return img_copy
 
+
 def mouse_callback(event, x, y, flags, params):
     """
     Mouse callback function for selecting corners
@@ -71,6 +72,7 @@ def mouse_callback(event, x, y, flags, params):
         points.append([x, y])
         cv2.putText(image,f"({x},{y})",(x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
         cv2.circle(image, (x, y), 5, (0, 0, 255), -1)
+
 
 def get_corners(img):
     """
@@ -94,7 +96,6 @@ def get_corners(img):
     cv2.destroyAllWindows()
 
     return np.array(points)
-
 
 
 def warp_on_frame(image_to_warp, target_image):
@@ -130,7 +131,6 @@ def warp_on_frame(image_to_warp, target_image):
     warped_image = cv2.add(target_image, warped_image)
     
     return warped_image
-
 
 
 def get_harris_corners(img, num_corners=1000, window_size=5, neighborhood_size=7):
@@ -180,7 +180,7 @@ def get_harris_corners(img, num_corners=1000, window_size=5, neighborhood_size=7
     Hor1 = cv2.hconcat([Ixx_disp, Iyy_disp])
     Hor2 = cv2.hconcat([R_disp, Rs_disp])
     cv2.imshow("Harris Corner Detection (Gradient and Response visualization)", cv2.vconcat([Hor1, Hor2]))
-    
+    cv2.imwrite("output_harris.jpg", cv2.vconcat([Hor1, Hor2]))
 
     # Exception if the number of corners is greater than the number of pixels in the image
     if num_corners > Rs.size:
@@ -240,9 +240,10 @@ def calculate_homography(points1, points2):
     ## Returns:
         homography: 3x3 homography matrix
     """
+    num_points = points1.shape[0]
     # Create A matrix
-    A = np.zeros((8, 9))
-    for i in range(4):
+    A = np.zeros((num_points*2, 9))
+    for i in range(num_points):
         x1, y1 = points1[i]
         x2, y2 = points2[i]
         # Create A matrix for each point
@@ -259,7 +260,7 @@ def calculate_homography(points1, points2):
     return homography
 
 
-def homography_ransac(correspondences):
+def homography_ransac(correspondences, max_iterations=2000):
     """
     Estimate the homography between the two images using the given correspondences
 
@@ -269,7 +270,6 @@ def homography_ransac(correspondences):
     # Convert correspoindence dictionary to (N, 2 x 2) array
     correspondences = np.array(list(correspondences.items()))
     # Implement RANSAC for homography estimation
-    max_iterations = 2
     best_homography = None
     max_inliers = 0
     best_set_correspondences = {}
@@ -303,6 +303,9 @@ def homography_ransac(correspondences):
         temp_correspondences = {}
         iter += 1
 
+    # Calculate homography with final set of inliers
+    best_homography = calculate_homography(np.array(list(best_set_correspondences.keys())), np.array(list(best_set_correspondences.values())))
+
     # Return homography
     return best_homography, best_set_correspondences
 
@@ -325,9 +328,36 @@ def warp_and_blend(img1, img2, homography):
     else:
         homography = np.linalg.inv(homography)
 
-    result = cv2.warpPerspective(right_img, homography, (left_img.shape[1] + right_img.shape[1], left_img.shape[0]))
+    # move homography down to account for the top of the image
+    virtical_space = int(left_img.shape[0]/8)
+    homography = homography @ np.array([[1, 0, 0], [0, 1, virtical_space], [0, 0, 1]])
+
+    result = cv2.warpPerspective(right_img, homography, (left_img.shape[1] + right_img.shape[1], left_img.shape[0]+virtical_space*2))
+    result[virtical_space:left_img.shape[0]+virtical_space, 0:left_img.shape[1]] = left_img
     
-    result[0:left_img.shape[0], 0:left_img.shape[1]] = left_img
+    # blend images along the vertical axis twice with different kernel sizes and widths
+    cv2.blur(result[:, left_img.shape[1] - 3:left_img.shape[1] + 3], 
+             (5, 1), 
+             result[:, left_img.shape[1] - 3:left_img.shape[1] + 3])
+    cv2.blur(result[:, left_img.shape[1] - 6:left_img.shape[1] + 6], 
+             (2, 1), 
+             result[:, left_img.shape[1] - 6:left_img.shape[1] + 6])
+
+    # blend images along the horizontal axis twice with different kernel sizes and widths
+    cv2.blur(result[virtical_space - 2:virtical_space + 2, :], 
+            (1, 5), 
+            result[virtical_space - 2:virtical_space + 2, :])
+    cv2.blur(result[virtical_space - 6:virtical_space + 6, :], 
+            (1, 2), 
+            result[virtical_space - 6:virtical_space + 6, :])
+
+    cv2.blur(result[virtical_space+left_img.shape[0] - 2:virtical_space+left_img.shape[0] + 2, :], 
+            (1, 5), 
+            result[virtical_space+left_img.shape[0] - 2:virtical_space+left_img.shape[0] + 2, :])
+    cv2.blur(result[virtical_space+left_img.shape[0] - 6:virtical_space+left_img.shape[0] + 6, :], 
+            (1, 2), 
+            result[virtical_space+left_img.shape[0] - 6:virtical_space+left_img.shape[0] + 6, :])
+
     return result
 
 
@@ -369,6 +399,11 @@ def display_correspondences(img1, img2, correspondences, inliers=None):
             cv2.line(images, (c1r, c1c), (c2r+img1.shape[1], c2c), thickness=1, color=(0, 255, 0))
     cv2.imshow("correspondences", images)
     cv2.imwrite("output_correspondences.jpg", images)
+
+
+################
+# Main functions
+################
 
 
 def get_args():
@@ -443,6 +478,6 @@ def extra_credit():
 
 
 if __name__ == "__main__":
-    #main()
-    extra_credit()
+    main()
+    # extra_credit()
 
